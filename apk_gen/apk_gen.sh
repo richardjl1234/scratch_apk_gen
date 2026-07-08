@@ -1,17 +1,20 @@
 #!/bin/bash
 
 # ============================================================
-# Scratch APK Modifier v3 - 专为 3.0.61 APK 优化
+# Scratch APK Modifier v4 - 专为 3.0.61 APK 优化
 # 用法: ./apk_gen.sh [缩放比例]
 # 示例: ./apk_gen.sh 2.0   (默认: 2.0)
-# 修补内容 (v3 新增):
+# 修补内容 (v4 在 v3 基础上新增主题切换):
 #   1. HTML viewport 解除 maximum-scale=2.0 钳制
 #   2. Java WebView.setInitialScale() 4 个 densityDpi 常量替换
 #   3. (v3) 积木吸附音效: 改写 Blockly.BlockAnimations.connectionUiEffect,
 #      每次新建 Audio 元素直接播放, 避开 Android WebView 的 autoplay 限制
-#      (原 audio manager.preload 在 WebView 上常失败, 用户听不到 click 反馈)
+#   4. (v4) 主题切换: 在 "编辑" 菜单加 5 个平级菜单项
+#      (Default / Dark / High Contrast / Pastel / Sunset)
+#      调用 Blockly.Colours.overrideColours + 重新 inject CSS + 重绘积木,
+#      选择写入 localStorage, 下次启动自动恢复
 # 参数范围: (0, 100)，>1.0 放大 UI，<1.0 缩小 UI。
-# 输出: out/Scratch_3.0.61_modified_${SCALE}x_v3.apk
+# 输出: out/Scratch_3.0.61_modified_${SCALE}x_v4.apk
 # ============================================================
 
 # ---------- 配置 ----------
@@ -33,7 +36,7 @@ if ! awk "BEGIN { exit !(($SCALE_VALUE + 0) > 0 && ($SCALE_VALUE + 0) < 100) }";
     exit 1
 fi
 
-echo -e "${GREEN}=== Scratch APK Modifier v3 (3.0.61 专用) ===${NC}"
+echo -e "${GREEN}=== Scratch APK Modifier v4 (3.0.61 专用) ===${NC}"
 echo -e "缩放比例: ${YELLOW}${SCALE_VALUE}x${NC}"
 echo ""
 
@@ -69,12 +72,12 @@ if [ ! -f "$APK_FILE" ]; then
 fi
 
 # ---------- 清理旧文件 ----------
-echo -e "${GREEN}[1/9] 清理旧文件...${NC}"
+echo -e "${GREEN}[1/10] 清理旧文件...${NC}"
 rm -f org_scratch_unsigned.apk org_scratch_aligned.apk
 rm -rf org_scratch_decoded
 
 # ---------- 解包 APK ----------
-echo -e "${GREEN}[2/9] 解包 APK...${NC}"
+echo -e "${GREEN}[2/10] 解包 APK...${NC}"
 apktool d "$APK_FILE" -o org_scratch_decoded -f > /dev/null 2>&1
 if [ $? -ne 0 ]; then
     echo -e "${RED}解包 APK 失败${NC}"
@@ -88,7 +91,7 @@ fi
 # ---------- 修改 index.html ----------
 # 解除 maximum-scale=2.0 钳制 + 允许手势缩放；
 # initial-scale 留 1.0 作 fallback，真正起效的是 Java setInitialScale()
-echo -e "${GREEN}[3/9] 修改 index.html (解除 maximum-scale 钳制)...${NC}"
+echo -e "${GREEN}[3/10] 修改 index.html (解除 maximum-scale 钳制 + 注入 theme_palettes.js 引用)...${NC}"
 INDEX_FILE=$(find org_scratch_decoded/ -name "index.html" | head -1)
 if [ -z "$INDEX_FILE" ]; then
     echo -e "${RED}错误: 未找到 index.html${NC}"
@@ -98,6 +101,9 @@ echo "  找到: $INDEX_FILE"
 
 sed -i 's|<meta name="viewport"[^>]*>|<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=10.0, user-scalable=yes">|' "$INDEX_FILE"
 
+# (v4) 在 main.js 之前插入 theme_palettes.js 脚本引用，让 applyScratchTheme 在 Edit 菜单 onClick 触发前已定义
+sed -i 's|<script type="text/javascript" src="main.js"></script>|<script type="text/javascript" src="theme_palettes.js"></script><script type="text/javascript" src="main.js"></script>|' "$INDEX_FILE"
+
 if grep -q "maximum-scale=10.0" "$INDEX_FILE"; then
     echo -e "  ${GREEN}✓ 解除 maximum-scale 钳制成功${NC}"
 else
@@ -105,10 +111,17 @@ else
     exit 1
 fi
 
+if grep -q 'src="theme_palettes.js"' "$INDEX_FILE"; then
+    echo -e "  ${GREEN}✓ theme_palettes.js 引用已注入${NC}"
+else
+    echo -e "  ${RED}✗ theme_palettes.js 引用注入失败${NC}"
+    exit 1
+fi
+
 # ---------- 修改 Editor.smali ----------
 # Java 层 WebView.setInitialScale() 覆盖 HTML initial-scale，
 # 4 个常量对应不同 densityDpi 分支，全部替换为 SCALE_VALUE*100 的十六进制。
-echo -e "${GREEN}[4/9] 修改 Editor.smali (setInitialScale = ${SCALE_VALUE}x)...${NC}"
+echo -e "${GREEN}[4/10] 修改 Editor.smali (setInitialScale = ${SCALE_VALUE}x)...${NC}"
 EDITOR_SMALI=$(find org_scratch_decoded/smali* -name "Editor.smali" | head -1)
 if [ -z "$EDITOR_SMALI" ]; then
     echo -e "${RED}错误: 未找到 Editor.smali${NC}"
@@ -156,7 +169,7 @@ echo -e "  ${GREEN}✓ smali 修补完成${NC}"
 # 这里改为: 每次吸附时新建一个 Audio 元素直接 play()，
 # 用户手势 (touchend/mouseup) 链下 WebView 允许 autoplay，可靠出声。
 # 失败时回落原 audio manager，保证桌面浏览器行为不变。
-echo -e "${GREEN}[5/9] 修改 main.js (积木吸附音效)...${NC}"
+echo -e "${GREEN}[5/10] 修改 main.js (积木吸附音效)...${NC}"
 MAIN_JS=$(find org_scratch_decoded/assets/www -maxdepth 1 -name "main.js" | head -1)
 if [ -z "$MAIN_JS" ]; then
     echo -e "${RED}错误: 未找到 main.js${NC}"
@@ -191,8 +204,46 @@ if [ "$OLD_COUNT_AFTER" -ne 0 ] || [ "$NEW_COUNT_AFTER" -ne 1 ]; then
 fi
 echo -e "  ${GREEN}✓ 吸附音效修补完成 (OLD=$OLD_COUNT_BEFORE→0, NEW=0→$NEW_COUNT_AFTER)${NC}"
 
+# ---------- 主题切换 (v4) ----------
+# 在 assets/www/ 下放一份 theme_palettes.js（含 5 主题 + applyScratchTheme + boot restore），
+# 并在 main.js Edit 菜单里插 5 个 MenuItem 调用 applyScratchTheme(name)。
+# 主题偏好通过 localStorage 持久化；启动时 theme_palettes.js 的 setTimeout 等 Blockly
+# 就绪后自动恢复上次选择。
+echo -e "${GREEN}[6/10] 主题切换 (v4 新增): 复制 theme_palettes.js + Edit 菜单插入 5 项...${NC}"
+THEME_SRC="theme_palettes.js"
+THEME_DST="org_scratch_decoded/assets/www/theme_palettes.js"
+if [ ! -f "$THEME_SRC" ]; then
+    echo -e "${RED}错误: 未找到 $THEME_SRC${NC}"
+    exit 1
+fi
+cp "$THEME_SRC" "$THEME_DST"
+echo "  已复制: $THEME_SRC → $THEME_DST ($(wc -c < $THEME_DST) bytes)"
+
+# 锚点: deletion_restorer 子节点前插 5 个 MenuItem
+# 使用唯一 anchor (offset 21177414 附近)，s///g 默认只替换首次匹配，但
+# 为安全起见用 \Q...\E + 完整 anchor 字符串确保唯一匹配。
+THEME_ANCHOR='external_react_default.a.createElement(deletion_restorer, null, function (handleRestore, _ref3) {'
+THEME_INSERT='external_react_default.a.createElement(menu_MenuItem, { onClick: function () { window.applyScratchTheme("default"); _this6.props.onRequestCloseEdit(); } }, external_react_default.a.createElement(index_es["a"], { defaultMessage: "Theme: Default", id: "gui.menuBar.themeDefault" })), external_react_default.a.createElement(menu_MenuItem, { onClick: function () { window.applyScratchTheme("dark"); _this6.props.onRequestCloseEdit(); } }, external_react_default.a.createElement(index_es["a"], { defaultMessage: "Theme: Dark", id: "gui.menuBar.themeDark" })), external_react_default.a.createElement(menu_MenuItem, { onClick: function () { window.applyScratchTheme("highContrast"); _this6.props.onRequestCloseEdit(); } }, external_react_default.a.createElement(index_es["a"], { defaultMessage: "Theme: High Contrast", id: "gui.menuBar.themeHighContrast" })), external_react_default.a.createElement(menu_MenuItem, { onClick: function () { window.applyScratchTheme("pastel"); _this6.props.onRequestCloseEdit(); } }, external_react_default.a.createElement(index_es["a"], { defaultMessage: "Theme: Pastel", id: "gui.menuBar.themePastel" })), external_react_default.a.createElement(menu_MenuItem, { onClick: function () { window.applyScratchTheme("sunset"); _this6.props.onRequestCloseEdit(); } }, external_react_default.a.createElement(index_es["a"], { defaultMessage: "Theme: Sunset", id: "gui.menuBar.themeSunset" })), '
+
+ANCHOR_COUNT_BEFORE=$(grep -oF "$THEME_ANCHOR" "$MAIN_JS" | wc -l)
+if [ "$ANCHOR_COUNT_BEFORE" -ne 1 ]; then
+    echo -e "${RED}✗ EditMenu anchor 出现 $ANCHOR_COUNT_BEFORE 次 (预期 1)，跳过修补${NC}"
+    exit 1
+fi
+
+# perl 单次替换：把 anchor 替换成 <INSERTED 5 MenuItem> + anchor
+perl -i -pe "s#\Q$THEME_ANCHOR\E#$THEME_INSERT$THEME_ANCHOR#" "$MAIN_JS"
+
+ANCHOR_COUNT_AFTER=$(grep -oF "$THEME_ANCHOR" "$MAIN_JS" | wc -l)
+THEME_MENU_COUNT=$(grep -oE 'gui\.menuBar\.theme(Default|Dark|HighContrast|Pastel|Sunset)' "$MAIN_JS" | wc -l)
+if [ "$ANCHOR_COUNT_AFTER" -ne 1 ] || [ "$THEME_MENU_COUNT" -ne 5 ]; then
+    echo -e "${RED}✗ 主题菜单注入失败 (anchor=$ANCHOR_COUNT_AFTER, theme items=$THEME_MENU_COUNT)${NC}"
+    exit 1
+fi
+echo -e "  ${GREEN}✓ Edit 菜单插入 5 个主题项${NC}"
+
 # ---------- 重新打包 ----------
-echo -e "${GREEN}[6/9] 重新打包 APK...${NC}"
+echo -e "${GREEN}[7/10] 重新打包 APK...${NC}"
 apktool b org_scratch_decoded -o org_scratch_unsigned.apk --use-aapt2 > /dev/null 2>&1
 if [ $? -ne 0 ]; then
     echo -e "${YELLOW}警告: aapt2 打包失败，尝试普通打包...${NC}"
@@ -207,7 +258,7 @@ fi
 
 # ---------- zipalign 对齐 ----------
 if [ "$USE_ZIPALIGN" = true ]; then
-    echo -e "${GREEN}[7/9] zipalign 对齐 APK...${NC}"
+    echo -e "${GREEN}[8/10] zipalign 对齐 APK...${NC}"
     zipalign -v -p 4 org_scratch_unsigned.apk org_scratch_aligned.apk > /dev/null 2>&1
     if [ $? -eq 0 ]; then
         SIGN_APK="org_scratch_aligned.apk"
@@ -221,7 +272,7 @@ else
 fi
 
 # ---------- 生成或复用 keystore ----------
-echo -e "${GREEN}[8/9] 准备签名密钥...${NC}"
+echo -e "${GREEN}[9/10] 准备签名密钥...${NC}"
 if [ ! -f "$KEYSTORE_NAME" ]; then
     echo "  生成新的 keystore..."
     keytool -genkey -v -keystore "$KEYSTORE_NAME" \
@@ -236,7 +287,7 @@ else
 fi
 
 # ---------- 签名 (SHA256) ----------
-echo -e "${GREEN}[9/9] 签名 APK (SHA256)...${NC}"
+echo -e "${GREEN}[10/10] 签名 APK (SHA256)...${NC}"
 jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
     -keystore "$KEYSTORE_NAME" \
     -storepass "$KEYSTORE_PASS" -keypass "$KEYSTORE_PASS" \
@@ -253,7 +304,7 @@ else
 fi
 
 # ---------- 重命名最终文件 ----------
-OUTPUT_APK="out/Scratch_3.0.61_modified_${SCALE_VALUE}x_v3.apk"
+OUTPUT_APK="out/Scratch_3.0.61_modified_${SCALE_VALUE}x_v4.apk"
 mv "$SIGN_APK" "$OUTPUT_APK"
 
 # ---------- 显示结果 ----------

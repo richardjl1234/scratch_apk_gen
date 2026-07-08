@@ -1,6 +1,6 @@
 # 常用命令快速参考
 
-# ========== apk_gen: 缩放 + 积木吸附音效 (默认 2.0x) ==========
+# ========== apk_gen: 缩放 + 积木吸附音效 + 5 主题 (默认 2.0x) ==========
 ./apk_gen/apk_gen.sh
 ./apk_gen/apk_gen.sh 1.0
 ./apk_gen/apk_gen.sh 1.5
@@ -25,10 +25,10 @@ sudo apt install apktool
 sudo apt install zipalign
 
 # 验证已签名 APK
-jarsigner -verify apk_gen/out/Scratch_3.0.61_modified_2.0x_v3.apk
+jarsigner -verify apk_gen/out/Scratch_3.0.61_modified_2.0x_v4.apk
 
 # 解包验证: smali 常量 (应为 4 处 SCALE_HEX, 5 次 setInitialScale 调用)
-apktool d apk_gen/out/Scratch_3.0.61_modified_3.0x_v3.apk -o /tmp/check -f
+apktool d apk_gen/out/Scratch_3.0.61_modified_3.0x_v4.apk -o /tmp/check -f
 grep -nE "const [vp][0-9]+, 0x12c$" /tmp/check/smali*/Editor.smali
 grep -c "WebView;->setInitialScale(I)V" /tmp/check/smali*/Editor.smali
 
@@ -39,9 +39,15 @@ grep "viewport" /tmp/check/assets/www/index.html
 grep -oF 'Blockly.BlockAnimations.connectionUiEffect=function(a){a.workspace.getAudioManager().play("click")};' /tmp/check/assets/www/main.js
 grep -oF 'new Audio("static/blocks-media/click.wav")' /tmp/check/assets/www/main.js
 
-# 安装到已连接的安卓设备
-adb install -r apk_gen/out/Scratch_3.0.61_modified_2.0x_v3.apk
+# 解包验证: 主题切换 (theme_palettes.js 在, Edit 菜单 5 项, applyScratchTheme 定义)
+ls /tmp/check/assets/www/theme_palettes.js
+grep -oE 'gui\.menuBar\.theme(Default|Dark|HighContrast|Pastel|Sunset)' /tmp/check/assets/www/main.js | wc -l   # → 5
+grep -c "window.applyScratchTheme" /tmp/check/assets/www/theme_palettes.js                                       # → ≥1
+grep -c "src=\"theme_palettes.js\"" /tmp/check/assets/www/index.html                                              # → 1
 
-# ========== 清理旧版产物 (如残留 v2 APK) ==========
-rm -f apk_gen/out/Scratch_3.0.61_modified_*x_v2.apk
+# 安装到已连接的安卓设备
+adb install -r apk_gen/out/Scratch_3.0.61_modified_2.0x_v4.apk
+
+# ========== 清理旧版产物 (如残留 v2/v3 APK) ==========
+rm -f apk_gen/out/Scratch_3.0.61_modified_*x_v[23].apk
 rm -f Scratch_3.0.61_font_*.apk
