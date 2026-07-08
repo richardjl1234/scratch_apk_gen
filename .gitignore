@@ -1,5 +1,4 @@
 my-release-key.keystore
 .claude
-*.apk
 apk_gen/out/**
 
