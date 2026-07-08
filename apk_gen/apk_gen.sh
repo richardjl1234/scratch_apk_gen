@@ -205,7 +205,7 @@ else
 fi
 
 # ---------- 重命名最终文件 ----------
-OUTPUT_APK="out/Scratch_3.0.61_modified_${SCALE_VALUE}x.apk"
+OUTPUT_APK="out/Scratch_3.0.61_modified_${SCALE_VALUE}x_v2.apk"
 mv "$SIGN_APK" "$OUTPUT_APK"
 
 # ---------- 显示结果 ----------
