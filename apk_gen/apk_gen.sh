@@ -1,12 +1,17 @@
 #!/bin/bash
 
 # ============================================================
-# Scratch APK Modifier v5 - 专为 3.0.61 APK 优化
-# 用法: ./m4.sh [缩放比例]
-# 示例: ./m4.sh 2.0   (默认: 2.0)
-# 同时修补 HTML viewport 与 Java WebView.setInitialScale()，
-# 解除 maximum-scale=2.0 钳制，让参数真正控制缩放。
+# Scratch APK Modifier v3 - 专为 3.0.61 APK 优化
+# 用法: ./apk_gen.sh [缩放比例]
+# 示例: ./apk_gen.sh 2.0   (默认: 2.0)
+# 修补内容 (v3 新增):
+#   1. HTML viewport 解除 maximum-scale=2.0 钳制
+#   2. Java WebView.setInitialScale() 4 个 densityDpi 常量替换
+#   3. (v3) 积木吸附音效: 改写 Blockly.BlockAnimations.connectionUiEffect,
+#      每次新建 Audio 元素直接播放, 避开 Android WebView 的 autoplay 限制
+#      (原 audio manager.preload 在 WebView 上常失败, 用户听不到 click 反馈)
 # 参数范围: (0, 100)，>1.0 放大 UI，<1.0 缩小 UI。
+# 输出: out/Scratch_3.0.61_modified_${SCALE}x_v3.apk
 # ============================================================
 
 # ---------- 配置 ----------
@@ -28,7 +33,7 @@ if ! awk "BEGIN { exit !(($SCALE_VALUE + 0) > 0 && ($SCALE_VALUE + 0) < 100) }";
     exit 1
 fi
 
-echo -e "${GREEN}=== Scratch APK Modifier v5 (3.0.61 专用) ===${NC}"
+echo -e "${GREEN}=== Scratch APK Modifier v3 (3.0.61 专用) ===${NC}"
 echo -e "缩放比例: ${YELLOW}${SCALE_VALUE}x${NC}"
 echo ""
 
@@ -64,12 +69,12 @@ if [ ! -f "$APK_FILE" ]; then
 fi
 
 # ---------- 清理旧文件 ----------
-echo -e "${GREEN}[1/8] 清理旧文件...${NC}"
+echo -e "${GREEN}[1/9] 清理旧文件...${NC}"
 rm -f org_scratch_unsigned.apk org_scratch_aligned.apk
 rm -rf org_scratch_decoded
 
 # ---------- 解包 APK ----------
-echo -e "${GREEN}[2/8] 解包 APK...${NC}"
+echo -e "${GREEN}[2/9] 解包 APK...${NC}"
 apktool d "$APK_FILE" -o org_scratch_decoded -f > /dev/null 2>&1
 if [ $? -ne 0 ]; then
     echo -e "${RED}解包 APK 失败${NC}"
@@ -83,7 +88,7 @@ fi
 # ---------- 修改 index.html ----------
 # 解除 maximum-scale=2.0 钳制 + 允许手势缩放；
 # initial-scale 留 1.0 作 fallback，真正起效的是 Java setInitialScale()
-echo -e "${GREEN}[3/8] 修改 index.html (解除 maximum-scale 钳制)...${NC}"
+echo -e "${GREEN}[3/9] 修改 index.html (解除 maximum-scale 钳制)...${NC}"
 INDEX_FILE=$(find org_scratch_decoded/ -name "index.html" | head -1)
 if [ -z "$INDEX_FILE" ]; then
     echo -e "${RED}错误: 未找到 index.html${NC}"
@@ -103,7 +108,7 @@ fi
 # ---------- 修改 Editor.smali ----------
 # Java 层 WebView.setInitialScale() 覆盖 HTML initial-scale，
 # 4 个常量对应不同 densityDpi 分支，全部替换为 SCALE_VALUE*100 的十六进制。
-echo -e "${GREEN}[4/8] 修改 Editor.smali (setInitialScale = ${SCALE_VALUE}x)...${NC}"
+echo -e "${GREEN}[4/9] 修改 Editor.smali (setInitialScale = ${SCALE_VALUE}x)...${NC}"
 EDITOR_SMALI=$(find org_scratch_decoded/smali* -name "Editor.smali" | head -1)
 if [ -z "$EDITOR_SMALI" ]; then
     echo -e "${RED}错误: 未找到 Editor.smali${NC}"
@@ -143,8 +148,51 @@ LOAD_COUNT=$(grep -cE "^    $NEW_INST [vp][0-9]+, $SCALE_HEX\$" "$EDITOR_SMALI")
 echo -e "  加载 ${SCALE_HEX} 的指令数: ${LOAD_COUNT} (预期 4)"
 echo -e "  ${GREEN}✓ smali 修补完成${NC}"
 
+# ---------- 修改 main.js (积木吸附音效) ----------
+# Scratch 默认的 connectionUiEffect 通过 audio manager 播放 click.wav，
+# 但 audio manager.preload() 内部调用 .play().then(pause) 在 Android WebView
+# 上常因 autoplay 限制失败，导致 SOUNDS_ 中的 Audio 元素状态异常，
+# 后续 play() 也无声。这是 3.0.61 在平板上"积木吸附没声音"的根因。
+# 这里改为: 每次吸附时新建一个 Audio 元素直接 play()，
+# 用户手势 (touchend/mouseup) 链下 WebView 允许 autoplay，可靠出声。
+# 失败时回落原 audio manager，保证桌面浏览器行为不变。
+echo -e "${GREEN}[5/9] 修改 main.js (积木吸附音效)...${NC}"
+MAIN_JS=$(find org_scratch_decoded/assets/www -maxdepth 1 -name "main.js" | head -1)
+if [ -z "$MAIN_JS" ]; then
+    echo -e "${RED}错误: 未找到 main.js${NC}"
+    exit 1
+fi
+echo "  找到: $MAIN_JS"
+
+# 用 perl 而不是 sed：main.js 是单行 350k+ 字符，sed 在超长行上有边界问题，
+# 且 perl 对引号/反斜杠的处理更可预测。
+if ! command -v perl &> /dev/null; then
+    echo -e "${RED}错误: 未找到 perl，请先安装${NC}"
+    echo "  Ubuntu/Debian: sudo apt install perl"
+    exit 1
+fi
+
+OLD='Blockly.BlockAnimations.connectionUiEffect=function(a){a.workspace.getAudioManager().play("click")};'
+NEW='Blockly.BlockAnimations.connectionUiEffect=function(a){try{var s=new Audio("static/blocks-media/click.wav");s.volume=.7;var p=s.play();if(p&&p.catch)p.catch(function(){})}catch(e){try{a.workspace.getAudioManager().play("click")}catch(_){}}};'
+
+OLD_COUNT_BEFORE=$(grep -oF "$OLD" "$MAIN_JS" | wc -l)
+if [ "$OLD_COUNT_BEFORE" -ne 1 ]; then
+    echo -e "${RED}✗ 原 connectionUiEffect 代码出现 $OLD_COUNT_BEFORE 次 (预期 1)，跳过修补${NC}"
+    exit 1
+fi
+
+perl -i -pe "s#\Q$OLD\E#$NEW#" "$MAIN_JS"
+
+OLD_COUNT_AFTER=$(grep -oF "$OLD" "$MAIN_JS" | wc -l)
+NEW_COUNT_AFTER=$(grep -oF "$NEW" "$MAIN_JS" | wc -l)
+if [ "$OLD_COUNT_AFTER" -ne 0 ] || [ "$NEW_COUNT_AFTER" -ne 1 ]; then
+    echo -e "${RED}✗ 修补校验失败 (OLD=$OLD_COUNT_AFTER, NEW=$NEW_COUNT_AFTER)${NC}"
+    exit 1
+fi
+echo -e "  ${GREEN}✓ 吸附音效修补完成 (OLD=$OLD_COUNT_BEFORE→0, NEW=0→$NEW_COUNT_AFTER)${NC}"
+
 # ---------- 重新打包 ----------
-echo -e "${GREEN}[5/8] 重新打包 APK...${NC}"
+echo -e "${GREEN}[6/9] 重新打包 APK...${NC}"
 apktool b org_scratch_decoded -o org_scratch_unsigned.apk --use-aapt2 > /dev/null 2>&1
 if [ $? -ne 0 ]; then
     echo -e "${YELLOW}警告: aapt2 打包失败，尝试普通打包...${NC}"
@@ -159,7 +207,7 @@ fi
 
 # ---------- zipalign 对齐 ----------
 if [ "$USE_ZIPALIGN" = true ]; then
-    echo -e "${GREEN}[6/8] zipalign 对齐 APK...${NC}"
+    echo -e "${GREEN}[7/9] zipalign 对齐 APK...${NC}"
     zipalign -v -p 4 org_scratch_unsigned.apk org_scratch_aligned.apk > /dev/null 2>&1
     if [ $? -eq 0 ]; then
         SIGN_APK="org_scratch_aligned.apk"
@@ -173,7 +221,7 @@ else
 fi
 
 # ---------- 生成或复用 keystore ----------
-echo -e "${GREEN}[7/8] 准备签名密钥...${NC}"
+echo -e "${GREEN}[8/9] 准备签名密钥...${NC}"
 if [ ! -f "$KEYSTORE_NAME" ]; then
     echo "  生成新的 keystore..."
     keytool -genkey -v -keystore "$KEYSTORE_NAME" \
@@ -188,7 +236,7 @@ else
 fi
 
 # ---------- 签名 (SHA256) ----------
-echo -e "${GREEN}[8/8] 签名 APK (SHA256)...${NC}"
+echo -e "${GREEN}[9/9] 签名 APK (SHA256)...${NC}"
 jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 \
     -keystore "$KEYSTORE_NAME" \
     -storepass "$KEYSTORE_PASS" -keypass "$KEYSTORE_PASS" \
@@ -205,7 +253,7 @@ else
 fi
 
 # ---------- 重命名最终文件 ----------
-OUTPUT_APK="out/Scratch_3.0.61_modified_${SCALE_VALUE}x_v2.apk"
+OUTPUT_APK="out/Scratch_3.0.61_modified_${SCALE_VALUE}x_v3.apk"
 mv "$SIGN_APK" "$OUTPUT_APK"
 
 # ---------- 显示结果 ----------
