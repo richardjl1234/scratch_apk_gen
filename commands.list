@@ -1,47 +1,47 @@
 # 常用命令快速参考
 
-# ========== m4.sh / m5.sh: 均匀缩放（两者行为一致，二选一调用） ==========
-# 用默认 2.0x 缩放修改 Scratch APK
-./m4.sh
-./m5.sh
+# ========== apk_gen: 缩放 + 积木吸附音效 (默认 2.0x) ==========
+./apk_gen/apk_gen.sh
+./apk_gen/apk_gen.sh 1.0
+./apk_gen/apk_gen.sh 1.5
+./apk_gen/apk_gen.sh 2.0
+./apk_gen/apk_gen.sh 2.5
+./apk_gen/apk_gen.sh 3.0
+./apk_gen/apk_gen.sh 4.0
+./apk_gen/apk_gen.sh 5.0
 
-# 指定缩放比例（范围 0~100；>1.0 放大，<1.0 缩小）
-./m4.sh 1.0
-./m4.sh 2.0
-./m4.sh 2.5
-./m4.sh 3.0
-./m4.sh 4.0
-./m4.sh 5.0
-
-./m5.sh 1.0
-./m5.sh 1.5
-./m5.sh 2.0
-./m5.sh 2.5
-./m5.sh 3.0
+# ========== anti-sb3: 把 .sb3 项目拆成可读 JSON ==========
+python3 anti-sb3/sb3_parse.py class/L1-疯狂的小黄猫.sb3
+# 输出: anti-sb3/sb3_out/project_raw.json + project_pretty.json
 
 # ========== 验证 / 排错 ==========
-# 查看 apktool / JDK 工具版本
 apktool --version
 keytool -help
 jarsigner -help
+perl -v
 
-# 安装缺失依赖（Ubuntu/Debian）
+# 缺失时安装 (Ubuntu/Debian)
 sudo apt install apktool
 sudo apt install zipalign
 
-# 验证已签名的 APK
-jarsigner -verify Scratch_3.0.61_modified_2.0x.apk
+# 验证已签名 APK
+jarsigner -verify apk_gen/out/Scratch_3.0.61_modified_2.0x_v3.apk
 
-# 解包输出，验证 smali 常量已替换为目标值（4 处加载 SCALE_HEX，5 次 setInitialScale 调用）
-apktool d Scratch_3.0.61_modified_3.0x.apk -o /tmp/check -f
-grep -nE "const(/16)? [vp][0-9]+, 0x12c$" /tmp/check/smali*/Editor.smali
+# 解包验证: smali 常量 (应为 4 处 SCALE_HEX, 5 次 setInitialScale 调用)
+apktool d apk_gen/out/Scratch_3.0.61_modified_3.0x_v3.apk -o /tmp/check -f
+grep -nE "const [vp][0-9]+, 0x12c$" /tmp/check/smali*/Editor.smali
 grep -c "WebView;->setInitialScale(I)V" /tmp/check/smali*/Editor.smali
 
-# 验证 viewport 钳制已解除
-unzip -p Scratch_3.0.61_modified_3.0x.apk assets/www/index.html | grep "viewport"
+# 解包验证: viewport 钳制已解除
+grep "viewport" /tmp/check/assets/www/index.html
+
+# 解包验证: 积木吸附音效修补成功 (应仅 1 处 NEW, 0 处 OLD)
+grep -oF 'Blockly.BlockAnimations.connectionUiEffect=function(a){a.workspace.getAudioManager().play("click")};' /tmp/check/assets/www/main.js
+grep -oF 'new Audio("static/blocks-media/click.wav")' /tmp/check/assets/www/main.js
 
 # 安装到已连接的安卓设备
-adb install -r Scratch_3.0.61_modified_3.0x.apk
+adb install -r apk_gen/out/Scratch_3.0.61_modified_2.0x_v3.apk
 
-# ========== 清理旧 m5.sh 字体专缩产物（如有） ==========
+# ========== 清理旧版产物 (如残留 v2 APK) ==========
+rm -f apk_gen/out/Scratch_3.0.61_modified_*x_v2.apk
 rm -f Scratch_3.0.61_font_*.apk
