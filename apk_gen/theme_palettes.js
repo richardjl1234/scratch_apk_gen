@@ -150,24 +150,108 @@
     }
   }
 
-  function reInjectCss() {
-    try {
-      if (typeof Blockly !== "undefined" && Blockly.Css) {
-        Blockly.Css.styleSheet_ = null;
-        Blockly.Css.inject(true, Blockly.Css.mediaPath_);
-      }
-    } catch (e) {}
+  // block.type → palette key
+  function typeToCat(t) {
+    if (!t) return "more";
+    if (t.indexOf("motion_") === 0) return "motion";
+    if (t.indexOf("looks_") === 0) return "looks";
+    if (t.indexOf("sound_") === 0) return "sounds";
+    if (t.indexOf("event_") === 0 || t.indexOf("events_") === 0) return "event";
+    if (t.indexOf("control_") === 0) return "control";
+    if (t.indexOf("sensing_") === 0) return "sensing";
+    if (t.indexOf("pen_") === 0) return "pen";
+    if (t.indexOf("operator") === 0) return "operators";
+    if (t.indexOf("data_listcontents") === 0 || t.indexOf("data_list") === 0) return "data_lists";
+    if (t.indexOf("data_") === 0) return "data";
+    return "more";
   }
 
-  function repaintBlocks() {
+  function toolboxIdToCat(id) {
+    if (id === "events") return "event";
+    if (id === "sounds" || id === "sound") return "sounds";
+    if (id === "data-lists" || id === "data_lists") return "data_lists";
+    if (id === "variables" || id === "data") return "data";
+    if (id === "operators" || id === "operator") return "operators";
+    return id;
+  }
+
+  function reInjectCss() {
+    try {
+      if (typeof Blockly === "undefined" || !Blockly.Css) return;
+      // 删旧 <style>
+      try {
+        if (Blockly.Css.styleSheet_ && Blockly.Css.styleSheet_.ownerNode
+            && Blockly.Css.styleSheet_.ownerNode.parentNode) {
+          Blockly.Css.styleSheet_.ownerNode.parentNode.removeChild(Blockly.Css.styleSheet_.ownerNode);
+        }
+      } catch (e0) {}
+      try {
+        var leftovers = document.querySelectorAll("style");
+        for (var i = 0; i < leftovers.length; i++) {
+          if (leftovers[i].id && leftovers[i].id.indexOf("blockly") === 0) {
+            leftovers[i].parentNode.removeChild(leftovers[i]);
+          }
+        }
+      } catch (e1) {}
+      Blockly.Css.styleSheet_ = null;
+      try {
+        Blockly.Css.inject(true, Blockly.Css.mediaPath_);
+      } catch (e2) { console.warn("[scratch-theme] reInjectCss inject:", e2); }
+    } catch (e) {
+      console.warn("[scratch-theme] reInjectCss outer:", e);
+    }
+  }
+
+  function repaintBlocks(palette) {
     try {
       var ws = Blockly.getMainWorkspace && Blockly.getMainWorkspace();
-      if (!ws) return;
+      if (!ws) { console.warn("[scratch-theme] repaintBlocks: no main workspace"); return; }
       var all = ws.getAllBlocks(false);
+      var n = 0;
       for (var i = 0; i < all.length; i++) {
-        try { all[i].updateColour(); } catch (e) {}
+        var b = all[i];
+        try {
+          var cat = typeToCat(b.type);
+          var c = (palette && palette.cats && palette.cats[cat]) || (palette && palette.cats && palette.cats.more);
+          if (c && b.setColourFromRawValues_) {
+            b.setColourFromRawValues_(c[0], c[1], c[2]);
+            n++;
+          } else if (b.updateColour) {
+            b.updateColour();
+            n++;
+          }
+        } catch (eBlock) {}
       }
-    } catch (e) {}
+      console.log("[scratch-theme] repaintBlocks: " + n + " of " + all.length + " blocks");
+    } catch (e) {
+      console.warn("[scratch-theme] repaintBlocks outer:", e);
+    }
+  }
+
+  function repaintToolbox(palette) {
+    try {
+      if (!palette || !palette.cats) return;
+      var items = document.querySelectorAll(".scratchCategoryMenuItem");
+      var n = 0;
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        var cls = item.className || "";
+        var m = cls.match(/scratchCategoryId-([a-zA-Z_-]+)/);
+        if (!m) continue;
+        var cat = toolboxIdToCat(m[1]);
+        var c = palette.cats[cat] || palette.cats.more;
+        if (!c) continue;
+        var bubble = item.querySelector(".scratchCategoryItemBubble");
+        if (bubble) {
+          bubble.style.backgroundColor = c[0];
+          bubble.style.borderColor = c[1];
+          n++;
+        }
+      }
+      console.log("[scratch-theme] repaintToolbox: " + n + " of " + items.length + " bubbles");
+    } catch (e) {
+      console.warn("[scratch-theme] repaintToolbox:", e);
+    }
   }
 
   function overlayReact(themeName) {
@@ -186,12 +270,15 @@
   window.applyScratchTheme = function (name) {
     try {
       var p = P[name] || P.default;
-      applyPalette(p);
-      reInjectCss();
-      overlayReact(name || "default");
-      repaintBlocks();
-      try { localStorage.setItem("scratch.theme", name || "default"); } catch (e) {}
-    } catch (e) { console.warn("[theme]", e); }
+      console.log("[scratch-theme] applyScratchTheme:", name, "Blockly ready:", typeof Blockly !== "undefined" && !!Blockly.Colours);
+      try { applyPalette(p); console.log("[scratch-theme] palette applied; Blockly.Colours.workspace=", Blockly.Colours && Blockly.Colours.workspace); } catch (e1) { console.warn("[scratch-theme] applyPalette:", e1); }
+      try { reInjectCss(); } catch (e2) { console.warn("[scratch-theme] reInjectCss:", e2); }
+      try { overlayReact(name || "default"); } catch (e3) { console.warn("[scratch-theme] overlayReact:", e3); }
+      try { repaintBlocks(p); } catch (e4) { console.warn("[scratch-theme] repaintBlocks:", e4); }
+      try { repaintToolbox(p); } catch (e5) { console.warn("[scratch-theme] repaintToolbox:", e5); }
+      try { localStorage.setItem("scratch.theme", name || "default"); } catch (e6) {}
+      console.log("[scratch-theme] applyScratchTheme done:", name);
+    } catch (e) { console.warn("[scratch-theme] outer:", e); }
   };
 
   window.getScratchTheme = function () {
@@ -201,9 +288,13 @@
   // Boot restore: wait for Blockly to be ready, then apply saved theme
   try {
     var saved = localStorage.getItem("scratch.theme");
+    console.log("[scratch-theme] boot: saved=", saved);
     if (saved && P[saved] && saved !== "default") {
       var tryRestore = function () {
-        if (typeof Blockly !== "undefined" && Blockly.Colours && Blockly.getMainWorkspace && Blockly.getMainWorkspace()) {
+        var ready = typeof Blockly !== "undefined" && Blockly.Colours
+                    && Blockly.getMainWorkspace && Blockly.getMainWorkspace();
+        if (ready) {
+          console.log("[scratch-theme] boot: Blockly ready, restoring", saved);
           window.applyScratchTheme(saved);
         } else {
           setTimeout(tryRestore, 200);
@@ -211,5 +302,5 @@
       };
       setTimeout(tryRestore, 200);
     }
-  } catch (e) {}
+  } catch (e) { console.warn("[scratch-theme] boot:", e); }
 })();
