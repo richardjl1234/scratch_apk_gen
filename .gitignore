@@ -1,4 +1,6 @@
 my-release-key.keystore
 .claude
 apk_gen/out/**
+class/**
+homework_from_pupil/**
 
